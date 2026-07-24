@@ -14,11 +14,12 @@ Trade-off acknowledged: larger models (e.g., `bge-base`, OpenAI embeddings) woul
 
 ## 2. Storage / Index Choice
 
-**Chosen: FAISS `IndexFlatL2`**
+**Chosen: FAISS `IndexFlatIP` with L2-normalized embeddings (cosine similarity)**
 
 Reasons:
-- **Exact search** — for a single moderately-sized document (one PDF split into a few hundred chunks at most), an approximate index (IVF, HNSW) isn't necessary; brute-force L2 search over a few hundred/thousand vectors is fast enough (milliseconds) and guarantees the true nearest neighbors, avoiding any recall trade-off.
-- **Simplicity** — `IndexFlatL2` requires no training/clustering step, unlike `IndexIVFFlat`, which needs enough data to train cluster centroids — overkill and potentially unreliable at this small scale.
+- **Cosine similarity, as required** — embeddings are normalized to unit length (`normalize_embeddings=True`) before being added to the index, so the inner product FAISS computes is mathematically equivalent to cosine similarity. The same normalization is applied to the query embedding at search time, keeping both in the same comparable space.
+- **Exact search** — for a single moderately-sized document (a few dozen chunks), an approximate index (IVF, HNSW) isn't necessary; brute-force inner-product search over this many vectors is fast enough (milliseconds) and guarantees the true nearest neighbors, avoiding any recall trade-off.
+- **Simplicity** — `IndexFlatIP` requires no training/clustering step, unlike `IndexIVFFlat`, which needs enough data to train cluster centroids — overkill and potentially unreliable at this small scale.
 - **Persistence is trivial** — `faiss.write_index` / `faiss.read_index` gives simple file-based persistence with no external database or service to run.
 - **Chunk-to-vector mapping via parallel storage** — rather than a more complex metadata store, the original chunk text is kept in a pickled list where index position aligns with the FAISS vector's index. This is simple and sufficient at this scale, though it's a design point worth flagging (see Limitations).
 
@@ -38,8 +39,9 @@ Reasons:
 ## 4. What I Had to Learn / Research
 
 - How FAISS indices work at a basic level (flat vs. IVF vs. HNSW indices) and why a flat index is appropriate for small-scale, single-document RAG rather than reaching for something more complex.
-- How `sentence-transformers` produces fixed-size dense embeddings and why query and document embeddings must come from the same model to be comparable in the same vector space.
-- LangChain's `RecursiveCharacterTextSplitter` and how its separator hierarchy tries larger semantic units (paragraphs) before falling back to smaller ones, and how `chunk_overlap` helps prevent information from being lost right at a chunk boundary.
+- The difference between `IndexFlatL2` (Euclidean distance) and `IndexFlatIP` (inner product), and that inner product only equals cosine similarity once vectors are L2-normalized — an easy mistake to miss since both indices "work" in the sense of returning nearest neighbors, but only one actually implements cosine similarity.
+- How `sentence-transformers` produces fixed-size dense embeddings and why query and document embeddings must come from the same model (and the same normalization) to be comparable in the same vector space.
+- How to detect natural section boundaries in a semi-structured document (heading-like lines, known topic keywords) and enforce a target word-count range per chunk, instead of relying on a fixed-character-count splitter — and the trade-offs involved (heuristic heading detection can occasionally misfire on a stray sentence).
 - Setting up and running Ollama locally, and how to pull/serve open models like Llama 3.2 for local inference instead of relying on a hosted LLM API.
 - The general shape of the "retrieve-then-generate" pattern: how retrieval indices (integer positions from FAISS) need to be mapped back to actual text via a parallel data structure, and how a grounding/anti-hallucination instruction should be embedded directly into the prompt.
 
@@ -47,7 +49,8 @@ Reasons:
 
 **Current limitations:**
 - **No source citations per answer** — the answer text doesn't indicate *which* retrieved chunk(s) it actually drew from; the user has to manually compare the answer against the "Retrieved Context" chunks.
-- **No re-ranking step** — chunks are returned purely by L2 distance from the initial embedding search; a second-stage cross-encoder re-ranker would likely improve precision, especially for borderline-relevant chunks.
+- **No re-ranking step** — chunks are returned purely by cosine similarity from the initial embedding search; a second-stage cross-encoder re-ranker would likely improve precision, especially for borderline-relevant chunks.
+- **Occasional heading misdetection** — a small number of chunks inherit a stray sentence fragment as their section title instead of a clean heading (e.g., "NHM"), since heading detection is heuristic (short, title-case lines, or a known keyword match). Doesn't affect retrieval quality — only the cosmetic section label shown alongside retrieved chunks in the UI.
 - **Static top_k** — `top_k` is a fixed value (5 in `app.py`/`rag.py`, 3 in `search.py`) regardless of query complexity or how many chunks are actually relevant.
 - **No handling for documents changing** — running `embed.py` again requires wiping/regenerating the whole `vectorstore/`; there's no incremental update or chunk-versioning logic.
 - **No evaluation harness** — there's no way currently to measure retrieval quality (e.g., recall@k against a labeled question set) or answer quality other than manual spot-checking.

@@ -22,19 +22,19 @@ PyMuPDF was chosen because it preserves reading order well and is fast on text-b
 
 ### 2. Chunking (`chunk.py`)
 
-The extracted text is split using LangChain's `RecursiveCharacterTextSplitter`:
+The extracted text is split into **section-aware chunks of 200–500 words each**:
 
-- **Chunk size:** 1800 characters
-- **Overlap:** 200 characters
-- **Separator priority:** `["\n\n", "\n", ".", " ", ""]` — tries to split on paragraph breaks first, then lines, then sentences, then words, only falling back to hard character cuts as a last resort.
+1. The text is first split into paragraphs (on blank lines).
+2. Each paragraph's first line is checked against a heading heuristic — either it matches a known topic keyword (e.g. "AB-PMJAY", "Ayushman Arogya Mandir", "PM-ABHIM", "ABDM", "NHM"), or it's a short, title-case line. Matching lines start a new section; everything else is appended to the current section's body.
+3. Sections are then merged (if too short) or split by sentence boundaries (if too long) so every final chunk falls within the 200–500 word target.
 
-Each chunk is written to its own file in `chunks/chunk_{i}.txt`. This "recursive" approach keeps semantically related sentences together rather than cutting mid-thought, and the 200-character overlap ensures context isn't lost at chunk boundaries.
+Each chunk is written to `chunks/chunk_{i}.txt` with its detected section title on the first line (`[Section Title]`), which is also what gets shown in the UI as the source of a retrieved chunk. This keeps chunks topically coherent (one chunk ≈ one concept like "AB-PMJAY" or "Mission Indradhanush") rather than cutting at an arbitrary character count.
 
 ### 3. Embedding & Storage (`embed.py`)
 
 - All `chunks/*.txt` files are read back in **numeric order** (sorted by the index in the filename, not alphabetically, to avoid `chunk_10.txt` sorting before `chunk_2.txt`).
-- Each chunk is embedded using **`sentence-transformers/all-MiniLM-L6-v2`**.
-- Embeddings are stored in a **FAISS `IndexFlatL2`** index (exact L2/Euclidean nearest-neighbor search, no approximation).
+- Each chunk is embedded using **`sentence-transformers/all-MiniLM-L6-v2`**, with embeddings L2-normalized (`normalize_embeddings=True`) so they have unit length.
+- Embeddings are stored in a **FAISS `IndexFlatIP`** index. Since vectors are normalized, inner product is equivalent to **cosine similarity** — exact search, no approximation.
 - Two files are saved to `vectorstore/`:
   - `index.faiss` — the FAISS vector index
   - `chunks.pkl` — a pickled Python list of the original chunk text, where **list position `i` corresponds to vector `i`** in the FAISS index. This positional mapping is how a search result (a vector index) gets translated back into readable text.
@@ -43,8 +43,8 @@ Each chunk is written to its own file in `chunks/chunk_{i}.txt`. This "recursive
 
 At query time:
 
-1. The user's question is embedded with the same `all-MiniLM-L6-v2` model (query and documents must share an embedding space).
-2. FAISS performs a similarity search (`index.search`) and returns the `top_k` nearest chunk indices.
+1. The user's question is embedded with the same `all-MiniLM-L6-v2` model, normalized the same way as the stored chunk embeddings (query and documents must share the same normalized embedding space for cosine similarity to be meaningful).
+2. FAISS performs a cosine-similarity search (`index.search` on the `IndexFlatIP` index) and returns the `top_k` most similar chunk indices.
 3. Those indices are used to look up the actual text from `chunks.pkl`.
 4. The retrieved chunks are concatenated into a `context` block.
 5. A prompt is constructed that instructs the LLM to answer **only** from the provided context, and to explicitly say `"I could not find the answer in the provided document."` if the context doesn't contain the answer — this reduces hallucination.
