@@ -24,8 +24,9 @@ model, index, chunks = load_resources()
 
 
 def retrieve(query, top_k=5):
-    embedding = model.encode([query], convert_to_numpy=True)
-    distances, indices = index.search(embedding, top_k)
+    # Normalized so inner product == cosine similarity, matching the stored vectors
+    embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)
+    scores, indices = index.search(embedding, top_k)
     return [chunks[i] for i in indices[0] if i != -1]
 
 

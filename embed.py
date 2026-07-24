@@ -1,7 +1,6 @@
 import os
 import pickle
 import faiss
-import numpy as np
 from sentence_transformers import SentenceTransformer
 
 # Load embedding model
@@ -21,15 +20,19 @@ for file in chunk_files:
 
 print(f"Loaded {len(chunks)} chunks")
 
-# Generate embeddings
-embeddings = model.encode(chunks, convert_to_numpy=True)
+# Generate embeddings, L2-normalized so that inner product == cosine similarity
+embeddings = model.encode(
+    chunks,
+    convert_to_numpy=True,
+    normalize_embeddings=True
+)
 
 print("Embeddings created")
 
-# Create FAISS index
+# Create FAISS index using inner product (cosine similarity on normalized vectors)
 dimension = embeddings.shape[1]
 
-index = faiss.IndexFlatL2(dimension)
+index = faiss.IndexFlatIP(dimension)
 index.add(embeddings)
 
 # Save FAISS index
@@ -41,4 +44,4 @@ faiss.write_index(index, "vectorstore/index.faiss")
 with open("vectorstore/chunks.pkl", "wb") as f:
     pickle.dump(chunks, f)
 
-print("Vector store saved successfully!")
+print("Vector store saved successfully! (cosine similarity via normalized IP index)")

@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer
 # Load embedding model
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load FAISS index
+# Load FAISS index (cosine similarity via normalized inner product)
 index = faiss.read_index("vectorstore/index.faiss")
 
 # Load stored chunks
@@ -15,14 +15,15 @@ with open("vectorstore/chunks.pkl", "rb") as f:
 
 
 def retrieve(query, top_k=5):
-    # Generate query embedding
+    # Generate query embedding, normalized to match the stored vectors
     query_embedding = embedding_model.encode(
         [query],
-        convert_to_numpy=True
+        convert_to_numpy=True,
+        normalize_embeddings=True
     )
 
-    # Search FAISS index
-    distances, indices = index.search(query_embedding, top_k)
+    # Search FAISS index (higher score = more similar)
+    scores, indices = index.search(query_embedding, top_k)
 
     # Return only valid chunks
     return [chunks[i] for i in indices[0] if i != -1]
