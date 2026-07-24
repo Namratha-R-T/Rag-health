@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 
 MIN_WORDS = 200
 MAX_WORDS = 500
@@ -135,6 +136,10 @@ def main():
     sections = split_into_sections(text)
     chunks = enforce_word_bounds(sections)
 
+    # Clear out any stale chunk files from a previous run before writing
+    # fresh ones, so chunks/ never ends up with a mix of old and new formats.
+    if os.path.exists("chunks"):
+        shutil.rmtree("chunks")
     os.makedirs("chunks", exist_ok=True)
 
     for i, (title, body) in enumerate(chunks):
