@@ -1,0 +1,29 @@
+to transport medicines, vaccines and blood samples for testing via drones.
+22,000 medicines were delivered through 7,700 kilometres via drones.
+65 healthcare centres used the service
+Transforming Healthcare Delivery Through Artificial Intelligence
+The government is deploying artificial intelligence across healthcare to further increase equity,
+accessibility, affordability and speed.
+AI-powered Clinical Decision Support Systems (CDSS) assists doctors during eSanjeevani
+consultations through structured data capture and clinical alerts.
+28.2 crore eSanjeevani consultations benefited from standardized AI-enabled support since
+CDSS was introduced in April 2023 through November 2025.
+AI tools are also strengthening disease screening. The ‘Cough Against TB’ tool uses cough analysis
+to identify likely tuberculosis cases.
+An additional 12-16% TB was reported by using this tool – cases which may have been
+missed if the patients were screened using conventional methods.
+More than 1.62 lakh people have been screened using this tool from March 2023 through
+November 2025.
+MadhuNetrAI enables automated diabetic retinopathy screening, helping prevent avoidable
+blindness. It eliminates the need for a specialist ophthalmologist at the point of screening.
+The solution was implemented across 38 facilities in 11 states
+It provided AI assistance during screening of more than 14,000 retinal images, benefiting 7,100
+patients (as of December 2025).
+Medical Education and Workforce
+Over the past 12 years, the government has expanded medical education to meet rising demand for
+health professionals.
+  
+ 
+Nursing has received equal attention:
+157 new nursing colleges are being established alongside the new medical colleges — adding
+approximately 15,700 nursing graduates annually.

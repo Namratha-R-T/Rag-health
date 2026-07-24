@@ -1,0 +1,88 @@
+import faiss
+import pickle
+import ollama
+from sentence_transformers import SentenceTransformer
+
+# Load embedding model
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Load FAISS index
+index = faiss.read_index("vectorstore/index.faiss")
+
+# Load stored chunks
+with open("vectorstore/chunks.pkl", "rb") as f:
+    chunks = pickle.load(f)
+
+
+def retrieve(query, top_k=5):
+    # Generate query embedding
+    query_embedding = embedding_model.encode(
+        [query],
+        convert_to_numpy=True
+    )
+
+    # Search FAISS index
+    distances, indices = index.search(query_embedding, top_k)
+
+    # Return only valid chunks
+    return [chunks[i] for i in indices[0] if i != -1]
+
+
+def answer_question(question):
+    retrieved_chunks = retrieve(question)
+
+    context = "\n\n".join(retrieved_chunks)
+
+    prompt = f"""
+You are a helpful AI assistant.
+
+Use ONLY the information in the provided context to answer the question.
+
+If the answer cannot be found in the context, reply exactly:
+
+"I could not find the answer in the provided document."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
+
+    response = ollama.chat(
+        model="llama3.2",
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
+
+    return response["message"]["content"], retrieved_chunks
+
+
+if __name__ == "__main__":
+    while True:
+        question = input("\nAsk a question (type 'exit' to quit): ").strip()
+
+        if question.lower() == "exit":
+            break
+
+        print("\nGenerating answer...\n")
+
+        answer, retrieved_chunks = answer_question(question)
+
+        print("Answer:")
+        print(answer)
+
+        print("\n" + "=" * 80)
+        print("Retrieved Context")
+        print("=" * 80)
+
+        for i, chunk in enumerate(retrieved_chunks, 1):
+            print(f"\nChunk {i}\n")
+            print(chunk[:500])
+            print("-" * 80)
