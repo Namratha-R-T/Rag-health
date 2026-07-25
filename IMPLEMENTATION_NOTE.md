@@ -63,6 +63,16 @@ Answer:
 - **Exact Fallback String**: Requires the exact string `"I could not find the answer in the provided document."` when context lacks the required information, facilitating programmatic verification in downstream code.
 - **Delimited Sections**: Uses clear labels (`Context:`, `Question:`, `Answer:`) to prevent prompt confusion.
 
+### Example Real-World Q&A
+
+**Question 1**: *"What is AB-PMJAY?"*
+- **Retrieved Chunk Titles**: `[Ayushman Bharat]`, `[AB-PMJAY]`, `[Health and Wellness Centres]`
+- **Answer Output**: "Ayushman Bharat Pradhan Mantri Jan Arogya Yojana (AB-PMJAY) is the world's largest health insurance scheme fully financed by the government. It provides health coverage of up to Rs. 5 lakh per family per year for secondary and tertiary care hospitalization to over 12 crore poor and vulnerable families."
+
+**Question 2**: *"What is PM-ABHIM?"*
+- **Retrieved Chunk Titles**: `[PM-ABHIM]`, `[Infrastructure Mission]`, `[National Health Mission]`
+- **Answer Output**: "The Pradhan Mantri Ayushman Bharat Health Infrastructure Mission (PM-ABHIM) is a pan-India scheme launched to strengthen healthcare infrastructure across the country. It focuses on developing capacities of primary, secondary, and tertiary care health systems, strengthening surveillance capabilities, and creating a network of public health labs."
+
 ---
 
 ## 4. What I Had to Learn / Research

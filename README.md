@@ -95,7 +95,7 @@ rag-health-assistant1/
    ```
 
 2. **Add Data File**:
-   Place the PIB backgrounder PDF (`pib_document.pdf`) into the `data/` directory.
+   Download the PIB PDF from [link] and place it at `data/pib_document.pdf` before running `ingest.py`.
 
 3. **Run Pipeline**:
    ```bash
