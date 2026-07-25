@@ -1,15 +1,29 @@
+import os
+import sys
 import fitz  # PyMuPDF
 
-pdf_path = "data/pib_document.pdf"
 
-doc = fitz.open(pdf_path)
+def main():
+    pdf_path = "data/pib_document.pdf"
+    output_path = "data/pib_document.txt"
 
-text = ""
+    if not os.path.exists(pdf_path):
+        print(f"Error: Required input file '{pdf_path}' not found.")
+        sys.exit(1)
 
-for page in doc:
-    text += page.get_text()
+    os.makedirs("data", exist_ok=True)
 
-with open("data/pib_document.txt", "w", encoding="utf-8") as f:
-    f.write(text)
+    doc = fitz.open(pdf_path)
 
-print("PDF text extracted successfully.")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    print("PDF text extracted successfully.")
+
+
+if __name__ == "__main__":
+    main()

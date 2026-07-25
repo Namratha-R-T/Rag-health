@@ -1,47 +1,62 @@
 import os
+import sys
 import pickle
 import faiss
 from sentence_transformers import SentenceTransformer
 
-# Load embedding model
-model = SentenceTransformer("all-MiniLM-L6-v2")
 
-chunks = []
+def main():
+    if not os.path.exists("chunks"):
+        print("Error: Required directory 'chunks' does not exist.")
+        sys.exit(1)
 
-# Read all chunk files
-chunk_files = sorted(
-    [f for f in os.listdir("chunks") if f.endswith(".txt")],
-    key=lambda x: int(x.split("_")[1].split(".")[0])
-)
+    chunk_files = sorted(
+        [f for f in os.listdir("chunks") if f.endswith(".txt")],
+        key=lambda x: int(x.split("_")[1].split(".")[0])
+    )
 
-for file in chunk_files:
-    with open(os.path.join("chunks", file), "r", encoding="utf-8") as f:
-        chunks.append(f.read())
+    if not chunk_files:
+        print("Error: No .txt files found in 'chunks' directory.")
+        sys.exit(1)
 
-print(f"Loaded {len(chunks)} chunks")
+    # Load embedding model
+    model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Generate embeddings, L2-normalized so that inner product == cosine similarity
-embeddings = model.encode(
-    chunks,
-    convert_to_numpy=True,
-    normalize_embeddings=True
-)
+    chunks = []
 
-print("Embeddings created")
+    # Read all chunk files
+    for file in chunk_files:
+        with open(os.path.join("chunks", file), "r", encoding="utf-8") as f:
+            chunks.append(f.read())
 
-# Create FAISS index using inner product (cosine similarity on normalized vectors)
-dimension = embeddings.shape[1]
+    print(f"Loaded {len(chunks)} chunks")
 
-index = faiss.IndexFlatIP(dimension)
-index.add(embeddings)
+    # Generate embeddings, L2-normalized so that inner product == cosine similarity
+    embeddings = model.encode(
+        chunks,
+        convert_to_numpy=True,
+        normalize_embeddings=True
+    )
 
-# Save FAISS index
-os.makedirs("vectorstore", exist_ok=True)
+    print("Embeddings created")
 
-faiss.write_index(index, "vectorstore/index.faiss")
+    # Create FAISS index using inner product (cosine similarity on normalized vectors)
+    dimension = embeddings.shape[1]
 
-# Save chunk texts
-with open("vectorstore/chunks.pkl", "wb") as f:
-    pickle.dump(chunks, f)
+    index = faiss.IndexFlatIP(dimension)
+    index.add(embeddings)
 
-print("Vector store saved successfully! (cosine similarity via normalized IP index)")
+    # Save FAISS index
+    os.makedirs("vectorstore", exist_ok=True)
+
+    faiss.write_index(index, "vectorstore/index.faiss")
+
+    # Save chunk texts
+    with open("vectorstore/chunks.pkl", "wb") as f:
+        pickle.dump(chunks, f)
+
+    print("Vector store saved successfully! (cosine similarity via normalized IP index)")
+
+
+if __name__ == "__main__":
+    main()

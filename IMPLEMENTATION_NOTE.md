@@ -1,66 +1,99 @@
-# Implementation Note — Health RAG Assistant
+# Implementation Note — Health Policy RAG Assistant
 
 ## 1. Embedding Model Choice
 
-**Chosen: `sentence-transformers/all-MiniLM-L6-v2`**
+**Selected Model**: `sentence-transformers/all-MiniLM-L6-v2`
 
-Reasons:
-- **Lightweight and fast** — only 384 dimensions and ~22M parameters, so it embeds chunks and queries quickly on CPU with no GPU dependency, which matters since the rest of the stack (Ollama/Llama 3.2) is also expected to run locally.
-- **Strong general-purpose semantic quality for its size** — it's one of the most widely benchmarked sentence-embedding models and performs well on semantic similarity/retrieval tasks despite being small.
-- **Easy integration** — a single line via the `sentence-transformers` library, no API key or external service required, which keeps the whole pipeline self-contained and offline-capable (important for a *health* document where data privacy is a reasonable concern).
-- **Consistency requirement** — the same model is used to embed both the document chunks and the incoming query, which is required for the vector space to be comparable; using a smaller/faster model made it cheap to re-embed everything during iteration.
+### Selection Rationale
+- **Lightweight & High Efficiency**: Produces compact 384-dimensional dense vectors with approximately 22 million parameters. It executes rapidly on CPU without requiring GPU hardware, ensuring fast embedding generation and low search latency.
+- **Strong General-Purpose Semantic Quality**: Ranks high among lightweight embedding models on standard benchmarks (such as MTEB) for semantic similarity and information retrieval.
+- **Local & Offline Execution**: Integrates natively via the `sentence-transformers` package. It operates fully offline with no API key requirements, external API costs, or network dependency, keeping health policy data local and private.
+- **Symmetric Model Usage**: The exact same model and L2 normalization are applied to both document chunks and user queries, maintaining vector space parity.
 
-Trade-off acknowledged: larger models (e.g., `bge-base`, OpenAI embeddings) would likely give modestly better retrieval accuracy, but at higher compute/latency cost and, for API-based ones, loss of the fully-local/offline property.
+### Trade-Off Analysis
+Larger embedding models (e.g., `bge-base-en-v1.5` or cloud APIs such as OpenAI `text-embedding-3-small`) can offer marginal improvements in semantic retrieval for complex queries. However, they introduce higher memory usage, slower CPU latency, recurring costs, and cloud privacy trade-offs. For a small target document (~14 chunks), `all-MiniLM-L6-v2` delivers an optimal balance of accuracy, speed, and local privacy.
+
+---
 
 ## 2. Storage / Index Choice
 
-**Chosen: FAISS `IndexFlatIP` with L2-normalized embeddings (cosine similarity)**
+**Selected Storage**: FAISS `IndexFlatIP` with L2-Normalized Embeddings
 
-Reasons:
-- **Cosine similarity, as required** — embeddings are normalized to unit length (`normalize_embeddings=True`) before being added to the index, so the inner product FAISS computes is mathematically equivalent to cosine similarity. The same normalization is applied to the query embedding at search time, keeping both in the same comparable space.
-- **Exact search** — for a single moderately-sized document (a few dozen chunks), an approximate index (IVF, HNSW) isn't necessary; brute-force inner-product search over this many vectors is fast enough (milliseconds) and guarantees the true nearest neighbors, avoiding any recall trade-off.
-- **Simplicity** — `IndexFlatIP` requires no training/clustering step, unlike `IndexIVFFlat`, which needs enough data to train cluster centroids — overkill and potentially unreliable at this small scale.
-- **Persistence is trivial** — `faiss.write_index` / `faiss.read_index` gives simple file-based persistence with no external database or service to run.
-- **Chunk-to-vector mapping via parallel storage** — rather than a more complex metadata store, the original chunk text is kept in a pickled list where index position aligns with the FAISS vector's index. This is simple and sufficient at this scale, though it's a design point worth flagging (see Limitations).
+### Selection Rationale
+- **Cosine Similarity Equivalence**: Embeddings are L2-normalized (`normalize_embeddings=True`) prior to indexing. For unit vectors, inner product matches cosine similarity:
+  $$\text{Cosine Similarity}(u, v) = \frac{u \cdot v}{\|u\|_2 \|v\|_2} = u \cdot v$$
+- **Exact Search (No Approximation)**: Given a small collection (~14 chunks), approximate nearest neighbor search (e.g., IVF or HNSW) is unnecessary. `IndexFlatIP` performs exact brute-force search in milliseconds with zero recall degradation.
+- **No Clustering or Training Required**: Unlike `IndexIVFFlat`, which requires training cluster centroids on sufficient vector samples, `IndexFlatIP` needs no training step.
+- **Simple Disk Persistence**: Simple file serialization via `faiss.write_index` to `vectorstore/index.faiss` and `faiss.read_index` for loading.
+- **Positional Chunk Mapping**: Document text chunks are stored in a parallel pickled list (`vectorstore/chunks.pkl`). List position `i` directly corresponds to vector index `i` in FAISS. This parallel array approach avoids the operational overhead of heavy vector databases while remaining fast and sufficient at this scale.
+
+---
 
 ## 3. LLM and Prompt Design
 
-**Chosen: Llama 3.2 via Ollama (local inference)**
+**Selected LLM**: Llama 3.2 (via Ollama local inference)
 
-Reasons:
-- Runs fully locally — no API cost, no data leaving the machine, appropriate for a health-related document.
-- Ollama provides a simple, consistent local serving interface (`ollama.chat`) without needing to manage model weights or a custom inference server directly.
+### Selection Rationale
+- **Privacy & Security**: Runs completely on the local host machine via Ollama. No health document content or user queries are transmitted to external servers.
+- **Zero API Expenses**: Eliminates token costs, rate limits, and external service downtime.
+- **Context-Grounded Reasoning**: Llama 3.2 reliably adheres to strict system prompts and context constraints.
 
-**Prompt design:**
-- The prompt explicitly instructs the model to answer **ONLY** using the supplied context, directly addressing the core RAG failure mode of the model falling back on parametric/world knowledge instead of the source document.
-- It specifies an **exact fallback string** (`"I could not find the answer in the provided document."`) for out-of-context questions, rather than letting the model paraphrase a refusal freely — this makes it easy to detect/handle "no answer found" cases programmatically if needed later (e.g., to trigger a different UI state).
-- Context and question are clearly delimited with labeled sections (`Context:` / `Question:` / `Answer:`) to reduce ambiguity for the model about which part of the prompt is reference material versus the actual task.
+### Prompt Design & Anti-Hallucination Guardrails
+The prompt structure explicitly isolates context from question and mandates an exact fallback string for out-of-context queries:
+
+```text
+You are a helpful AI assistant.
+
+Answer ONLY using the context below.
+
+If the answer is not available in the context, reply:
+
+"I could not find the answer in the provided document."
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+```
+
+- **Strict Context Boundary**: Explicitly instructs the model to utilize only the provided context block, mitigating parametric memory hallucinations.
+- **Exact Fallback String**: Requires the exact string `"I could not find the answer in the provided document."` when context lacks the required information, facilitating programmatic verification in downstream code.
+- **Delimited Sections**: Uses clear labels (`Context:`, `Question:`, `Answer:`) to prevent prompt confusion.
+
+---
 
 ## 4. What I Had to Learn / Research
 
-- How FAISS indices work at a basic level (flat vs. IVF vs. HNSW indices) and why a flat index is appropriate for small-scale, single-document RAG rather than reaching for something more complex.
-- The difference between `IndexFlatL2` (Euclidean distance) and `IndexFlatIP` (inner product), and that inner product only equals cosine similarity once vectors are L2-normalized — an easy mistake to miss since both indices "work" in the sense of returning nearest neighbors, but only one actually implements cosine similarity.
-- How `sentence-transformers` produces fixed-size dense embeddings and why query and document embeddings must come from the same model (and the same normalization) to be comparable in the same vector space.
-- How to detect natural section boundaries in a semi-structured document (heading-like lines, known topic keywords) and enforce a target word-count range per chunk, instead of relying on a fixed-character-count splitter — and the trade-offs involved (heuristic heading detection can occasionally misfire on a stray sentence).
-- Setting up and running Ollama locally, and how to pull/serve open models like Llama 3.2 for local inference instead of relying on a hosted LLM API.
-- The general shape of the "retrieve-then-generate" pattern: how retrieval indices (integer positions from FAISS) need to be mapped back to actual text via a parallel data structure, and how a grounding/anti-hallucination instruction should be embedded directly into the prompt.
+- **FAISS Index Architectures**: Studied differences between `IndexFlatL2` (Euclidean distance), `IndexFlatIP` (Inner Product), `IndexIVFFlat` (Inverted File Index), and `IndexHNSW` (Graph-based ANN). Confirmed that `IndexFlatIP` implements cosine similarity only when vectors are L2-normalized.
+- **Dense Embedding Normalization**: Researched vector normalization principles in `sentence-transformers` and why query vectors must undergo identical L2 normalization as document vectors.
+- **Section-Aware Chunking**: Researched heading detection heuristics (known scheme keywords like *AB-PMJAY*, *ABDM*, *NHM* plus title-case line checks) to chunk documents logically by section (200–500 words) instead of arbitrary character cuts.
+- **Local Ollama Integration**: Learned setup and API integration with Ollama Python bindings (`ollama.chat`) for local open-source LLM inference.
+- **Retrieve-Then-Generate Pattern**: Formulated positional index-to-chunk mapping, candidate retrieval, context concatenation, and prompt construction.
+
+---
 
 ## 5. Limitations & What I'd Improve With Two More Days
 
-**Current limitations:**
-- **No source citations per answer** — the answer text doesn't indicate *which* retrieved chunk(s) it actually drew from; the user has to manually compare the answer against the "Retrieved Context" chunks.
-- **No re-ranking step** — chunks are returned purely by cosine similarity from the initial embedding search; a second-stage cross-encoder re-ranker would likely improve precision, especially for borderline-relevant chunks.
-- **Occasional heading misdetection** — a small number of chunks inherit a stray sentence fragment as their section title instead of a clean heading (e.g., "NHM"), since heading detection is heuristic (short, title-case lines, or a known keyword match). Doesn't affect retrieval quality — only the cosmetic section label shown alongside retrieved chunks in the UI.
-- **Static top_k** — `top_k` is a fixed value (5 in `app.py`/`rag.py`, 3 in `search.py`) regardless of query complexity or how many chunks are actually relevant.
-- **No handling for documents changing** — running `embed.py` again requires wiping/regenerating the whole `vectorstore/`; there's no incremental update or chunk-versioning logic.
-- **No evaluation harness** — there's no way currently to measure retrieval quality (e.g., recall@k against a labeled question set) or answer quality other than manual spot-checking.
-- **Single-document assumption** — the pipeline hardcodes a single PDF path and doesn't support multiple documents, per-document filtering, or metadata (e.g., section/page number) attached to chunks.
-- **No streaming responses** — the Streamlit app waits for the full LLM response before displaying anything, which can feel slow for longer answers.
+### Recent Fixes
+- **User-Adjustable Top-K Slider**: Previously, `top_k` was fixed at a static value. This has been **FIXED** in `app.py` with an interactive UI sidebar slider allowing users to adjust `top_k` between 1 and 20 chunks dynamically.
+- **Reference & URL Chunk Filtering**: Updated `chunk.py` logic to identify and filter out reference-only or URL-heavy sections, preventing uninformative chunks from entering the vector store.
 
-**What I'd improve with two more days:**
-1. **Add citations** — track page/section metadata alongside each chunk during ingestion so the final answer can cite "(Page X)" style references, which matters a lot for a health-policy use case where verifiability is important.
-2. **Add a re-ranking step** using a small cross-encoder (e.g., `ms-marco-MiniLM`) on top of the FAISS candidates to improve the quality of what gets passed to the LLM.
-3. **Build a small evaluation set** of question/expected-answer pairs to measure retrieval recall and spot-check answer faithfulness, so changes to chunking/embedding can be validated instead of eyeballed.
-4. **Support multiple documents** with per-chunk source metadata (filename, page) instead of a single hardcoded PDF path.
-5. **Stream the LLM response** token-by-token in the Streamlit UI for better perceived responsiveness.
-6. **Store `.env`-driven configuration** (model names, chunk size, top_k) instead of hardcoded values scattered across files, so the pipeline is easier to tune without editing source.
+### Current Limitations
+1. **No Fine-Grained Source Citations**: The model's answer does not cite specific chunk IDs or page numbers directly inside the text response.
+2. **No Re-ranking Step**: Retrieval relies solely on bi-encoder cosine similarity without a secondary cross-encoder re-ranker.
+3. **Occasional Heading Misdetection**: Heuristic line inspection can occasionally mistake short non-heading lines for section titles.
+4. **No Incremental Indexing**: Updating or appending documents requires re-ingesting and re-embedding the entire vector store.
+5. **No Automated Evaluation Harness**: Assessment relies on manual spot-checking without systematic metrics (e.g., recall@k, RAGAS faithfulness).
+6. **Single-Document Focus**: Hardcoded pipeline geared for a single document (`pib_document.pdf`) without multi-document collection metadata.
+7. **No Response Streaming**: The Streamlit interface waits for the entire LLM response to finish before rendering.
+
+### Two-Day Improvement Roadmap
+1. **Metadata & Citation Engine**: Store page numbers and section headers with each chunk, prompting the LLM to output explicit source citations (e.g., `[Page 4, AB-PMJAY Section]`).
+2. **Cross-Encoder Re-ranking**: Add a second-stage re-ranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) over top-20 FAISS candidates to select the top-5 most relevant context snippets.
+3. **Evaluation Question Benchmark**: Construct a test set of 30+ question-answer pairs to benchmark retrieval recall and answer accuracy programmatically.
+4. **Multi-Document Support**: Expand schema to support indexing multiple PDF documents with per-document metadata filters.
+5. **Streamlit Token Streaming**: Use `ollama.chat(..., stream=True)` to stream generated response tokens to the UI in real-time.
+6. **Environment Configuration**: Move chunk sizes, model names, and system paths into `.env` and a centralized `config.py`.

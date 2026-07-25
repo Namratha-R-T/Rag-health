@@ -130,11 +130,31 @@ def enforce_word_bounds(sections):
 
 
 def main():
+    if not os.path.exists("data/pib_document.txt"):
+        print("Error: Required input file 'data/pib_document.txt' not found.")
+        return
+
     with open("data/pib_document.txt", "r", encoding="utf-8") as f:
         text = f.read()
 
     sections = split_into_sections(text)
     chunks = enforce_word_bounds(sections)
+
+    # Filter out reference/URL-heavy chunks (where >50% of lines are URLs)
+    filtered_chunks = []
+    for title, body in chunks:
+        lines = [line.strip() for line in body.splitlines() if line.strip()]
+        if lines:
+            url_line_count = sum(
+                1 for line in lines
+                if line.lower().startswith("http")
+                or re.fullmatch(r"https?://\S+", line, re.IGNORECASE)
+                or re.fullmatch(r"www\.\S+", line, re.IGNORECASE)
+            )
+            if (url_line_count / len(lines)) > 0.5:
+                continue
+        filtered_chunks.append((title, body))
+    chunks = filtered_chunks
 
     # Clear out any stale chunk files from a previous run before writing
     # fresh ones, so chunks/ never ends up with a mix of old and new formats.

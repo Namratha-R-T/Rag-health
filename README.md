@@ -1,96 +1,128 @@
 # Rag-health: Health Policy RAG Assistant
 
-A Retrieval-Augmented Generation (RAG) system that answers questions about a health policy document (PIB) using semantic search and a local LLM.
-
 ## Overview
-
-This project extracts text from a PDF health policy document, chunks it, embeds the chunks into a vector store, and lets users ask natural-language questions through a Streamlit UI. Relevant chunks are retrieved via semantic similarity and passed to a local LLM (via Ollama) to generate grounded answers.
+**Rag-health** is a Retrieval-Augmented Generation (RAG) system designed to answer questions regarding India's health transformation based on the Press Information Bureau (PIB) backgrounder document. The system combines semantic vector search with a local LLM (Llama 3.2 via Ollama) to deliver accurate, grounded, and privacy-preserving answers without sending data to external APIs.
 
 ---
 
-## Pipeline
+## Data Source
+The system relies exclusively on a single source document:
+- **Source Document**: PIB (Press Information Bureau) backgrounder page titled *"India's Health Transformation"* (June 2026).
+- **Topics Covered**: Key flagship government health initiatives including Ayushman Bharat PM-JAY (AB-PMJAY), Ayushman Arogya Mandir, PM-ABHIM, Ayushman Bharat Digital Mission (ABDM), National Health Mission (NHM), Mission Indradhanush, Pradhan Mantri Bhartiya Janaushadhi Pariyanjana (Jan Aushadhi), Poshan Abhiyaan, and related healthcare schemes.
+- **Storage & Policy**: The raw document is saved locally as `data/pib_document.pdf`. It is NOT committed to the repository (git-ignored) to ensure clean version tracking and compliance.
+- **Data Constraint**: Only this PIB document is used across the entire application; no outside or unverified documents are ingested.
+
+---
+
+## Pipeline Architecture
+
+The end-to-end processing pipeline consists of four modular stages:
 
 ### 1. Ingestion (`ingest.py`)
-
-The source PDF (`data/pib_document.pdf`) is opened with **PyMuPDF (fitz)**. Text is extracted page by page and concatenated, then saved as a plain text file at `data/pib_document.txt`.
-
-```
-PDF → fitz.open() → page.get_text() per page → data/pib_document.txt
-```
-
-PyMuPDF was chosen because it preserves reading order well and is fast on text-based PDFs (the PIB document is not scanned/image-based, so OCR wasn't needed).
+- **Method**: PDF text extraction using PyMuPDF (`fitz`).
+- **Process**: Reads `data/pib_document.pdf` page-by-page, extracts raw text, and saves the consolidated text to `data/pib_document.txt`.
+- **Rationale**: PyMuPDF was chosen because the source document is natively text-based and digitally generated, allowing ultra-fast extraction without requiring optical character recognition (OCR).
 
 ### 2. Chunking (`chunk.py`)
-
-The extracted text is split into **section-aware chunks of 200–500 words each**:
-
-1. The text is first split into paragraphs (on blank lines).
-2. Each paragraph's first line is checked against a heading heuristic — either it matches a known topic keyword (e.g. "AB-PMJAY", "Ayushman Arogya Mandir", "PM-ABHIM", "ABDM", "NHM"), or it's a short, title-case line. Matching lines start a new section; everything else is appended to the current section's body.
-3. Sections are then merged (if too short) or split by sentence boundaries (if too long) so every final chunk falls within the 200–500 word target.
-
-Each chunk is written to `chunks/chunk_{i}.txt` with its detected section title on the first line (`[Section Title]`), which is also what gets shown in the UI as the source of a retrieved chunk. This keeps chunks topically coherent (one chunk ≈ one concept like "AB-PMJAY" or "Mission Indradhanush") rather than cutting at an arbitrary character count.
+- **Method**: Section-aware topic chunking targeting 200–500 words per chunk.
+- **Heading Detection**: Utilizes known topic keywords (e.g., *AB-PMJAY*, *Ayushman Arogya Mandir*, *PM-ABHIM*, *ABDM*, *NHM*, *Mission Indradhanush*, *Jan Aushadhi*, *Poshan Abhiyaan*) and title-case short line heuristics to identify section transitions.
+- **Boundary Handling**: Sections shorter than 200 words are merged into adjacent blocks, while oversized sections are split at sentence boundaries to maintain context integrity. Reference or URL-only sections are automatically filtered out.
+- **Output**: Each chunk is saved individually to `chunks/chunk_i.txt`, with its detected section header written on the first line `[Section Title]` to serve as inline context metadata.
 
 ### 3. Embedding & Storage (`embed.py`)
+- **Embedding Model**: `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional dense vectors).
+- **Normalization**: Vectors are L2-normalized (`normalize_embeddings=True`) prior to indexing.
+- **FAISS Indexing**: Uses FAISS `IndexFlatIP` (Inner Product). When input vectors are L2-normalized, inner product mathematically equals **cosine similarity**. An exact brute-force search is used, which is ideal for small corpus sizes (~14 chunks) and yields zero recall loss.
+- **Vector Store Persistence**: Exports two main artifacts to `vectorstore/`:
+  - `vectorstore/index.faiss`: Binary FAISS index storing the normalized chunk vectors.
+  - `vectorstore/chunks.pkl`: Pickled Python list of text chunks aligned positionally with the FAISS vector indices (list index `i` matches FAISS vector `i`).
 
-- All `chunks/*.txt` files are read back in **numeric order** (sorted by the index in the filename, not alphabetically, to avoid `chunk_10.txt` sorting before `chunk_2.txt`).
-- Each chunk is embedded using **`sentence-transformers/all-MiniLM-L6-v2`**, with embeddings L2-normalized (`normalize_embeddings=True`) so they have unit length.
-- Embeddings are stored in a **FAISS `IndexFlatIP`** index. Since vectors are normalized, inner product is equivalent to **cosine similarity** — exact search, no approximation.
-- Two files are saved to `vectorstore/`:
-  - `index.faiss` — the FAISS vector index
-  - `chunks.pkl` — a pickled Python list of the original chunk text, where **list position `i` corresponds to vector `i`** in the FAISS index. This positional mapping is how a search result (a vector index) gets translated back into readable text.
-
-### 4. Retrieval + RAG (`rag.py`, `search.py`, `app.py`)
-
-At query time:
-
-1. The user's question is embedded with the same `all-MiniLM-L6-v2` model, normalized the same way as the stored chunk embeddings (query and documents must share the same normalized embedding space for cosine similarity to be meaningful).
-2. FAISS performs a cosine-similarity search (`index.search` on the `IndexFlatIP` index) and returns the `top_k` most similar chunk indices.
-3. Those indices are used to look up the actual text from `chunks.pkl`.
-4. The retrieved chunks are concatenated into a `context` block.
-5. A prompt is constructed that instructs the LLM to answer **only** from the provided context, and to explicitly say `"I could not find the answer in the provided document."` if the context doesn't contain the answer — this reduces hallucination.
-6. The prompt is sent to a local **Llama 3.2** model via **Ollama**, and the generated answer is returned along with the source chunks (shown in an expandable "Retrieved Context" section in the UI, for transparency/verifiability).
-
-`app.py` wraps this entire flow in a **Streamlit** interface: a text input for the question, a button to trigger retrieval + generation, the answer displayed prominently, and the retrieved chunks shown underneath so a user can verify the answer against the source text.
+### 4. Retrieval & RAG (`search.py`, `rag.py`, `app.py`)
+- **Query Vectorization**: User questions are embedded using `all-MiniLM-L6-v2` with the same L2 normalization, placing query and document embeddings in the identical vector space.
+- **Cosine Retrieval**: Computes top-$k$ nearest neighbors against `vectorstore/index.faiss` and retrieves text chunks from `vectorstore/chunks.pkl`.
+- **Context Injection & Prompting**: Retrieved chunks are concatenated into a context block. The LLM prompt instructs the model to answer **ONLY** using the provided context, with an explicit fallback string (`"I could not find the answer in the provided document."`) if the answer is missing.
+- **Local LLM**: Answers are generated locally using **Llama 3.2** via Ollama (zero API costs or data leakage).
+- **Interfaces**:
+  - `app.py`: Streamlit web interface featuring an interactive sidebar with an adjustable `top_k` slider (1–20 chunks), real-time query handling, and expandable retrieved context.
+  - `search.py`: Standalone CLI utility for testing semantic retrieval.
+  - `rag.py`: Interactive CLI loop for end-to-end retrieval and RAG answer generation.
 
 ---
 
 ## Project Structure
 
 ```
-Rag-health/
+rag-health-assistant1/
 ├── data/
-│   └── pib_document.pdf       # source document (not committed)
-├── chunks/                    # generated chunk .txt files
-├── vectorstore/
-│   ├── index.faiss            # FAISS vector index
-│   └── chunks.pkl             # chunk text, aligned by position to the index
-├── ingest.py                  # PDF → text
-├── chunk.py                   # text → chunks
-├── embed.py                   # chunks → embeddings → FAISS index
-├── search.py                  # standalone CLI semantic search
-├── rag.py                     # CLI RAG (search + LLM answer)
-├── app.py                     # Streamlit web app
-└── requirements.txt
+│   ├── pib_document.pdf          # Source PDF document (git-ignored)
+│   └── pib_document.txt          # Extracted plain text (git-ignored)
+├── chunks/                       # Section-aware text chunks (git-ignored)
+│   ├── chunk_0.txt
+│   └── ...
+├── vectorstore/                  # Vector index and chunk storage (git-ignored)
+│   ├── index.faiss               # FAISS vector index
+│   └── chunks.pkl                # Pickled text list positionally aligned with index
+├── ingest.py                     # PDF text extraction script
+├── chunk.py                      # Section-aware text chunker
+├── embed.py                      # Vector embedding and FAISS index generation
+├── search.py                     # Standalone CLI semantic search utility
+├── rag.py                        # Interactive CLI RAG interface
+├── app.py                        # Streamlit web frontend
+├── requirements.txt              # Dependency specifications
+├── .gitignore                    # Git ignore configuration
+├── .env                          # Environment variables configuration
+├── README.md                     # Comprehensive project documentation
+└── IMPLEMENTATION_NOTE.md        # Technical design & architecture implementation note
 ```
+
+---
 
 ## Setup & Usage
 
-```bash
-pip install -r requirements.txt
+### Prerequisites
+1. **Python 3.9+** installed.
+2. **Ollama** installed and running locally.
+3. Pull the **Llama 3.2** model:
+   ```bash
+   ollama pull llama3.2
+   ```
 
-# 1. Extract text from PDF
-python ingest.py
+### Quickstart Steps
 
-# 2. Chunk the extracted text
-python chunk.py
+1. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-# 3. Generate embeddings and build the FAISS index
-python embed.py
+2. **Add Data File**:
+   Place the PIB backgrounder PDF (`pib_document.pdf`) into the `data/` directory.
 
-# 4. Run the Streamlit app
-streamlit run app.py
-```
+3. **Run Pipeline**:
+   ```bash
+   # Step 1: Extract text from PDF
+   python ingest.py
 
-**Prerequisite:** [Ollama](https://ollama.com) must be installed and running locally with the `llama3.2` model pulled (`ollama pull llama3.2`).
+   # Step 2: Generate section-aware text chunks
+   python chunk.py
 
-You can also test retrieval alone (`python search.py`) or the full RAG loop from the CLI (`python rag.py`) without the Streamlit UI.
+   # Step 3: Embed chunks and build FAISS vector index
+   python embed.py
+   ```
+
+4. **Launch Streamlit Web App**:
+   ```bash
+   streamlit run app.py
+   ```
+
+### Alternative CLI Interfaces
+- **Semantic Search Only**:
+  ```bash
+  python search.py
+  ```
+- **Full RAG Terminal Loop**:
+  ```bash
+  python rag.py
+  ```
+
+### Graceful Error Handling
+If you launch `app.py`, `search.py`, or `rag.py` before building the vector store, the system displays a clear, graceful error message stating that `vectorstore/index.faiss` and `vectorstore/chunks.pkl` are missing, alongside exact instructions on how to run `ingest.py`, `chunk.py`, and `embed.py`.
