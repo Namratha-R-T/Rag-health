@@ -1,20 +1,50 @@
+import os
+import sys
 import faiss
 import pickle
 import ollama
 from sentence_transformers import SentenceTransformer
 
-# Load embedding model
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Load FAISS index (cosine similarity via normalized inner product)
-index = faiss.read_index("vectorstore/index.faiss")
+def _load_resources():
+    """Load model, FAISS index, and chunks with clear error messages."""
+    index_path = "vectorstore/index.faiss"
+    chunks_path = "vectorstore/chunks.pkl"
 
-# Load stored chunks
-with open("vectorstore/chunks.pkl", "rb") as f:
-    chunks = pickle.load(f)
+    if not os.path.exists(index_path) or not os.path.exists(chunks_path):
+        print(
+            "Error: Vector store not found.\n"
+            "Please run the ingestion pipeline first:\n"
+            "  python ingest.py\n"
+            "  python chunk.py\n"
+            "  python embed.py\n"
+            "\nMake sure you have placed PDF files in the data/ folder."
+        )
+        sys.exit(1)
+
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    index = faiss.read_index(index_path)
+
+    with open(chunks_path, "rb") as f:
+        chunks = pickle.load(f)
+
+    return model, index, chunks
+
+
+# Lazy-loaded globals
+embedding_model = None
+index = None
+chunks = None
+
+
+def _ensure_loaded():
+    global embedding_model, index, chunks
+    if embedding_model is None:
+        embedding_model, index, chunks = _load_resources()
 
 
 def retrieve(query, top_k=5):
+    _ensure_loaded()
     # Generate query embedding, normalized to match the stored vectors
     query_embedding = embedding_model.encode(
         [query],
