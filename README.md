@@ -111,7 +111,7 @@ rag-health-assistant1/
 
 4. **Launch Streamlit Web App**:
    ```bash
-   streamlit run app.py
+   python -m streamlit run app.py
    ```
 
 ### Alternative CLI Interfaces
