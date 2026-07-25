@@ -63,7 +63,9 @@ Answer:
 - **Exact Fallback String**: Requires the exact string `"I could not find the answer in the provided document."` when context lacks the required information, facilitating programmatic verification in downstream code.
 - **Delimited Sections**: Uses clear labels (`Context:`, `Question:`, `Answer:`) to prevent prompt confusion.
 
-### Example Real-World Q&A
+### Example Q&A (Expected Output)
+
+> **Note:** The following represents the expected model output based on the provided document context. Exact phrasing will vary depending on the local LLM (e.g., Llama 3.2) used during live execution.
 
 **Question 1**: *"What is AB-PMJAY?"*
 - **Retrieved Chunk Titles**: `[Ayushman Bharat]`, `[AB-PMJAY]`, `[Health and Wellness Centres]`
