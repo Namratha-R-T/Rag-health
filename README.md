@@ -95,7 +95,7 @@ rag-health-assistant1/
    ```
 
 2. **Add Data File**:
-   Download the PIB PDF from [link] and place it at `data/pib_document.pdf` before running `ingest.py`.
+   Download the PIB backgrounder page "India's Health Transformation" from https://www.pib.gov.in/PressReleasePage.aspx?PRID=2269699&reg=48&lang=2 (save/print as PDF) and place it at `data/pib_document.pdf` before running `ingest.py`.
 
 3. **Run Pipeline**:
    ```bash
@@ -113,6 +113,7 @@ rag-health-assistant1/
    ```bash
    python -m streamlit run app.py
    ```
+   (Using `python -m` avoids "streamlit not recognized" errors on systems where pip's Scripts folder isn't on PATH, e.g. Windows user installs.)
 
 ### Alternative CLI Interfaces
 - **Semantic Search Only**:
